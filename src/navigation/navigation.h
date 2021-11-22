@@ -47,7 +47,7 @@ class Navigation {
   Eigen::Vector2f last_odom_vel_ = Eigen::Vector2f(0.0, 0.0);
   Eigen::Vector2f odom_accel_ = Eigen::Vector2f(0.0, 0.0);
   // -- Kinematic and dynamic constraints for the car.
-  float max_vel_ = 1.0;
+  float max_vel_ = 0.0;
   float max_accel_ = 4.0;
   float min_turn_radius_ = 0.98;
   // -- Car dimensions.
@@ -65,6 +65,24 @@ class Navigation {
   Eigen::Vector2f laser_loc_ = Eigen::Vector2f(0.2, 0.15);
   // -- Simulation Update Frequency.
   float update_frequency_ = 20.0;
+
+  /*
+  * Determine if a point is within the circles defined by the minimum turning radius.
+  * The center point of each of these circles is at (+- min_turn_radius_, 0) where
+  * y is the baselink of the car.
+  */
+  inline bool FeasiblePoint(const Eigen::Vector2f& sampled_point) {
+    // Just calculate the point as if all are to the "left of the car", meaning positive
+    // curvature.
+    Eigen::Vector2f sampled_point_abs(abs(sampled_point.x()), sampled_point.y());
+    Eigen::Vector2f center(min_turn_radius_, 0.0);
+
+    if ((sampled_point_abs - center).squaredNorm() < min_turn_radius_) {
+      // Sampled point within the circular region the car cannot reach.
+      return false;
+    }
+    return true;
+  }  
 
     // Constructor
   explicit Navigation(const std::string& map_file, const double& latency, ros::NodeHandle* n);
@@ -90,16 +108,11 @@ class Navigation {
 
   void ObstacleAvoid();
 
-  void UpdateSimplePath();
+  void DrawCar();
 
-  void UpdateGlobalPath();
-  
-  Eigen::Vector2f UpdateLocalTarget();
-  
-  Eigen::Vector2f GetIntersectionPoint(Eigen::Vector2f A, 
-                                        Eigen::Vector2f B,
-                                        Eigen::Vector2f C,
-                                        float r) ;
+  void DrawSample();
+
+  void DrawTarget();
 
   vector_map::VectorMap map_;
 

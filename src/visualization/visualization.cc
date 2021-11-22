@@ -126,6 +126,13 @@ void DrawArc(const Vector2f& center,
   msg.arcs.push_back(arc);
 }
 
+void DrawArrow(const Vector2f& loc,
+               float angle,
+               uint32_t color,
+               VisualizationMsg& msg){
+
+}
+
 void DrawParticle(const Vector2f& loc,
                   float angle,
                   VisualizationMsg& msg) {

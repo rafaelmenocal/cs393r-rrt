@@ -65,6 +65,11 @@ void DrawArc(const Eigen::Vector2f& center,
              uint32_t color,
              amrl_msgs::VisualizationMsg& msg);
 
+void DrawArrow(const Eigen::Vector2f& loc,
+               float angle,
+               uint32_t color,
+               amrl_msgs::VisualizationMsg& msg);
+
 // Add a particle to the visualization message.
 void DrawParticle(const Eigen::Vector2f& loc,
                   float angle,

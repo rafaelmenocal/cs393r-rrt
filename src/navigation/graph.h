@@ -1,24 +1,74 @@
 #ifndef __SRC_NAVIGATION_GRAPH__
 #define __SRC_NAVIGATION_GRAPH__
 
+#include <limits>
 
-#include <cstdlib>
-using std::string;
-using std::vector;
+#include <node.h>
 
-struct Node {  
-    std::string id; // Used to find a node in the hashmap.
-    float x; // x-coordinate in the map_frame
-    float y; // y-coordinate in the map_frame
-    float cost = -1; // Cost of taking the path through this node (Equal to the path length)
-    float heuristic = 0; // This will be the distance between this node and the destination, cartesianally
-    bool marked = false; // We're using this to mark visited nodes, initially
-    // vector<Node*> neighbors; //Neighbors
-    std::vector<std::string> neighbor_ids;
-     // The current best path from some arbitrary start node to the current node. 
-     // Does not include the current node.
-    // vector<Node*> path;
-    std::vector<std::string> path_ids;
+
+class Graph {
+    private:
+    std::map<std::string, Node*> Nodes;
+
+    public:
+    Graph() {
+        //Do nothing;
+    };
+
+    void addNode(Node* node) {
+        Nodes[node->id] = node;
+    };
+
+    void addNode(float x, float y, float theta) {
+        std::string id = "" + std::to_string(x) + "," + std::to_string(y) + "," + std::to_string(theta);
+        Node *node = new Node();
+        node->x = x;
+        node->y = y;
+        node->theta = theta;
+        node->id = id;
+        Nodes[id] = node;
+    };
+
+    Node* getNode(std::string id) {
+        return Nodes[id];
+    };
+
+    Node* getClosestNode(float x, float y) {
+        float leastDist = std::numeric_limits<float>::max();
+        Node* result = nullptr;
+
+        for (auto& kv : Nodes) {
+            float dist = kv.second->getDistance(x, y);
+            if (leastDist > dist) {
+                leastDist = dist;
+                result = kv.second;
+            }
+        }        
+        return result;
+    }
+
+
+    // visualization::DrawPathOption(curvature_value, length, 0.0, local_viz_msg_);
+    // visualization::DrawArc(center_of_turn, radius, start_angle, end_angle, 0x68ad7b, global_viz_msg_);
+
+    void printGraph() {
+        for (auto& kv : Nodes) {
+            if (kv.second->isStart()) {
+                printNode(kv.second);
+            }
+        }
+    }
+    
+    void printNode(Node* n) {
+        //print n
+        //for each child
+            //print path
+            //printNode(child)
+    }
+
+    void printPath() {
+        //Print the path with some curvature, from some start, to some end
+    }
+    
 };
-
 #endif //__SRC_NAVIGATION_GRAPH__
