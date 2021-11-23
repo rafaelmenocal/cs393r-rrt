@@ -38,6 +38,7 @@
 #include "shared/ros/ros_helpers.h"
 #include "shared/util/random.h"
 #include "visualization/visualization.h"
+#include "node.h"
 
 // #include "global_planner.h"
 // #include "graph.h"

@@ -8,6 +8,12 @@ struct Edge {
     std::string start_id; // The if of the starting node of this path
     std::string end_id; // The id of the node that results when you take this path
     float curvature; // The curvature of the path to get from start to end
+
+    Edge(std::string sid, std::string eid, float c) {
+        start_id = sid;
+        end_id = eid;
+        curvature = c;
+    };
 };
 
 struct Node {  
