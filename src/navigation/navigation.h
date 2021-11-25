@@ -35,6 +35,14 @@ namespace ros {
   class NodeHandle;
 }  // namespace ros
 
+struct Node {
+    std::string id;
+    Eigen::Vector2f loc;
+    float_t theta;
+    std::string parent_id;
+    Eigen::Vector2f turn_point_to_node;
+  };
+
 namespace navigation {
 
 class Navigation {
@@ -110,11 +118,16 @@ class Navigation {
 
   void DrawCar();
 
-  void DrawSample();
+  void DrawTarget(bool& found);
 
-  void DrawTarget();
+  void FindPathToGoal();
+
+  Node ProcessSampledPoint(Eigen::Vector2f& sample_point);
 
   vector_map::VectorMap map_;
+
+  bool MapIntersection(Eigen::Vector2f& loc, Eigen::Vector2f& point);
+
 
  private:
 

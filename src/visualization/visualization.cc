@@ -130,6 +130,19 @@ void DrawArrow(const Vector2f& loc,
                float angle,
                uint32_t color,
                VisualizationMsg& msg){
+  float_t h_length = 0.5;
+  float_t a_length = 0.15;
+  Eigen::Vector2f h_point(loc.x() + h_length * cos(angle),loc.y() + h_length * sin(angle));
+
+  float theta_hl = (7.0/4.0) * M_PI + angle;
+  Eigen::Vector2f l_point(h_point.x() - a_length * cos(theta_hl), h_point.y() - a_length * sin(theta_hl));
+
+  float theta_hr = (3.0/4.0) * M_PI - angle;
+  Eigen::Vector2f r_point(h_point.x() + a_length * cos(theta_hr), h_point.y() - a_length * sin(theta_hr));
+
+  visualization::DrawLine(h_point, loc, 0x0045cf, msg);
+  visualization::DrawLine(h_point, l_point, 0x0045cf, msg);
+  visualization::DrawLine(h_point, r_point, 0x0045cf, msg);
 
 }
 
