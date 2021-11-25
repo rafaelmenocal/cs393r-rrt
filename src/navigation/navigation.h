@@ -36,11 +36,14 @@ namespace ros {
 }  // namespace ros
 
 struct Node {
-    std::string id;
-    Eigen::Vector2f loc;
-    float_t theta;
-    std::string parent_id;
-    Eigen::Vector2f turn_point_to_node;
+    std::string id; // unique node "x,y,theta"
+    Eigen::Vector2f loc; // location of node
+    float_t theta; // final heading at location
+    std::string parent_id; // "x,y,theta" of parent node
+    Eigen::Vector2f center_of_turn; // center of turn
+    float_t radius; // radius of turning arc
+    float_t theta_start; // start theta from COT to parent_node
+    float_t theta_end; // end theta from COT to this node
   };
 
 namespace navigation {
@@ -126,7 +129,9 @@ class Navigation {
 
   vector_map::VectorMap map_;
 
-  bool MapIntersection(Eigen::Vector2f& loc, Eigen::Vector2f& point);
+  bool MapStraightLineIntersection(Eigen::Vector2f& loc, Eigen::Vector2f& point);
+
+  bool MapCurvedLineIntersection(Eigen::Vector2f& loc, Eigen::Vector2f& point);
 
 
  private:

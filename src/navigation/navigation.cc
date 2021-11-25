@@ -100,7 +100,7 @@ namespace {
   Node goal_node;
   bool goal_initialized = false;
   bool goal_found = false;
-  float_t max_truncation_dist = 0.9;
+  float_t max_truncation_dist = 2.0;
   
   // Eigen::Vector2f sampled_point;
   unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
@@ -427,6 +427,18 @@ void DrawNode(Node& node) {
   visualization::DrawArrow(node.loc, node.theta, 0x68ad7b, global_viz_msg_);
 }
 
+void PrintNode(Node& node){
+  ROS_INFO("id = %s",node.id.c_str());
+  ROS_INFO("loc = (%f, %f)", node.loc.x(), node.loc.y());
+  ROS_INFO("theta = %f", node.theta);
+  ROS_INFO("parent_id = %s",node.parent_id.c_str());
+  ROS_INFO("cot = (%f, %f)", node.center_of_turn.x(), node.center_of_turn.y());
+  ROS_INFO("radius = %f", node.radius);
+  ROS_INFO("theta_start = %f", node.theta_start);
+  ROS_INFO("theta_end = %f", node.theta_end);
+  ROS_INFO("------------------");
+}
+
 void Navigation::DrawTarget(bool& found) {
   uint32_t color;
   if (found){
@@ -436,7 +448,7 @@ void Navigation::DrawTarget(bool& found) {
   }
   if (goal_node.loc != Eigen::Vector2f(0.0,0.0)){
     ROS_INFO("Goal Location = (%f, %f)", goal_node.loc.x(), goal_node.loc.y());
-    visualization::DrawArc(nav_goal_loc_, max_truncation_dist, 0, 2 * M_PI, color, global_viz_msg_);
+    visualization::DrawArc(nav_goal_loc_, max_truncation_dist, 0.0, 2.0 * M_PI, color, global_viz_msg_);
     visualization::DrawArrow(nav_goal_loc_, nav_goal_angle_, 0xcc0c0c, global_viz_msg_);
   }
 }
@@ -446,22 +458,25 @@ Eigen::Vector2f GetLocation(std::string& id){
 }
 
 void DrawGraph(){
+  ROS_INFO("=======================");
   ROS_INFO("Graph Contents: %ld items.", graph.size());
   std::map<std::string, Node>::iterator parent_id_ptr;
 
   for (auto const& x : graph) {
     Node node = x.second;
-    // ROS_INFO("ID = %s", x.first.c_str());
+    PrintNode(node);
     DrawNode(node);
 
     parent_id_ptr = graph.find(node.parent_id);
     if (parent_id_ptr != graph.end()) {
-      visualization::DrawLine(node.loc, parent_id_ptr->second.loc,0x68ad7b,global_viz_msg_);
+      visualization::DrawArc(node.center_of_turn, node.radius, node.theta_start, node.theta_end, 0x68ad7b, global_viz_msg_);
+      // Straight line from node to node
+      // visualization::DrawLine(node.loc, parent_id_ptr->second.loc,0x68ad7b,global_viz_msg_);
     }
   }
 }
 
-bool Navigation::MapIntersection(Eigen::Vector2f& loc, Eigen::Vector2f& point){
+bool Navigation::MapStraightLineIntersection(Eigen::Vector2f& loc, Eigen::Vector2f& point){
   int32_t num_map_lines = (int32_t)map_.lines.size();
   geometry::line2f my_line(loc, point);
   for (int32_t j = 0; j < num_map_lines; j++) {
@@ -470,6 +485,10 @@ bool Navigation::MapIntersection(Eigen::Vector2f& loc, Eigen::Vector2f& point){
     }
   }
   ROS_INFO("No intersection found between (%f,%f) (%f,%f)", loc.x(), loc.y(), point.x(), point.y());
+  return false;
+}
+
+bool Navigation::MapCurvedLineIntersection(Eigen::Vector2f& loc, Eigen::Vector2f& point){
   return false;
 }
 
@@ -487,8 +506,7 @@ void Navigation::FindPathToGoal() {
   }
 
   ROS_INFO("Distance To Goal = %f", min_dist);
-
-  if (!MapIntersection(closest_node.loc, goal_loc) &&
+  if (!MapStraightLineIntersection(closest_node.loc, goal_loc) &&
           min_dist <= max_truncation_dist) {
     goal_node.parent_id = closest_node.id;
   }
@@ -509,43 +527,122 @@ Node Navigation::ProcessSampledPoint(Eigen::Vector2f& sample_point){
   // distance before intersection with a wall
   float_t min_dist = 150.0;
   for (auto const& node_itr : graph) {
-    float_t d = (node_itr.second.loc - sample_point).norm();
-    if (d < min_dist){
-      min_dist = d;
+    float_t dist = (node_itr.second.loc - sample_point).norm();
+    if (dist < min_dist){
+      min_dist = dist;
       new_node.parent_id = node_itr.second.id;
     }
   }
   
   Eigen::Vector2f parent_loc = graph[new_node.parent_id].loc;
-  // simplification for iterative improvements
-  truncated_point = CalculateStraightTruncation(parent_loc, sample_point, max_truncation_dist);
+  float_t parent_theta = graph[new_node.parent_id].theta;
   
-  ROS_INFO("Trucated Point = (%f, %f)", truncated_point.x(), truncated_point.y());
-  
-  // *TODO: Use Geometry math to calculate and store the 
-  //    following variables in node:
-  // Eigen::Vector2f truncated_loc of this node
-  // Eigen::Vector2f turn_point used to get from parent to this node
-  // float_t final_heading to this node
-  // float_t radius/curvature to this node
+  //-----BEGIN COMPLICATED SECTION FOR CURVES
+  float_t x_r = parent_loc.x();
+  float_t y_r = parent_loc.y();
+  float_t theta_r = parent_theta;
+  float_t L_max = max_truncation_dist;
+  float_t x_s = sample_point.x();
+  float_t y_s = sample_point.y();
 
-  if (MapIntersection(parent_loc, truncated_point)) {
-    // this stops node from being added to graph
-    new_node.parent_id = "";
+  float_t x_h = x_r + cos(theta_r);
+  float_t y_h = y_r + sin(theta_r);
+  float_t m_hr = (y_h - y_r)/(x_h - x_r);
+  float_t b_hr = y_r - m_hr * x_r;
+
+  float_t m_T = -(x_h - x_r)/(y_h - y_r);
+  float_t b_T = y_r - m_T * x_r;
+
+  float_t x_T = (-2.0 * b_T * y_r + 2.0 * b_T * y_s + pow(x_r,2.0) + pow(y_r,2.0) - pow(y_s,2.0) - pow(x_s,2.0)) / (2.0 * x_r + 2 * y_r * m_T - 2.0 * y_s * m_T - 2.0 * x_s);
+  float_t y_T = m_T * x_T + b_T;
+
+  float_t R = sqrt(pow(x_T - x_r, 2.0) + pow(y_T - y_r, 2.0));
+
+  float_t s;
+  float_t s_0 = (-y_s - m_hr * x_s - b_hr) / abs(y_s - m_hr * x_s - b_hr);
+  if (abs(theta_r) <= M_PI/2.0) {
+    s = s_0;
+  } else {
+    s = -s_0;
   }
 
-  std::string id = to_string(truncated_point.x()) + "," + to_string(truncated_point.y()) + "," + to_string(0.0);
+  float_t theta_tan = atan2(s * (x_T - x_s), s * (y_s - y_T));
+  
+  float_t theta_d;
+  float_t theta_d_0 = theta_r - theta_tan;
+  if (abs(theta_d_0) < M_PI) {
+    theta_d = theta_d_0;
+  } else {
+    theta_d = theta_d_0 - ((theta_d_0) / abs(theta_d_0)) * 2.0 * M_PI;
+  }
+
+  float_t L = s * R * theta_d;
+  float_t theta_max = s * min(abs(L_max / R), abs(theta_d));
+  float_t d_max = sqrt(2.0 * pow(R,2.0) * (1 - cos(theta_max)));
+
+  float_t B_f = ((M_PI - theta_max) / 2.0) - (M_PI / 2.0 - theta_r);
+  float_t B_b = (M_PI - theta_max) - (B_f + (M_PI / 2.0));
+
+  float_t x_max;
+  float_t y_max;
+  if (L >= 0.0) {
+    x_max = x_r + d_max * cos(B_f);
+    y_max = y_r + d_max * sin(B_f);
+  } else {
+    x_max = x_r - d_max * sin(B_b);
+    y_max = y_r - d_max * cos(B_b);
+  }
+
+  float_t theta_maxtan = atan2(s * (x_T - x_max), s * (y_max - y_T));
+  
+  float_t theta_s;
+  float_t theta_s_0 = theta_r + M_PI / 2.0;
+  if (abs(theta_s_0) < M_PI){
+    theta_s = theta_s_0;
+  } else {
+    theta_s = theta_s_0 - (theta_s_0 / abs(theta_s_0)) * 2.0 * M_PI;
+  }
+
+  float_t theta_e;
+  float_t theta_e_0 = theta_maxtan - M_PI / 2.0;
+  if (abs(theta_e_0) < M_PI){
+    theta_e = theta_e_0;
+  } else {
+    theta_e = theta_e_0 - (theta_e_0 / abs(theta_e_0)) * 2.0 * M_PI;
+  }
+
+  //-----END COMPLICATED SECTION FOR CURVES
+
+  // truncated_point = CalculateStraightTruncation(parent_loc, sample_point, max_truncation_dist);
+  truncated_point = Eigen::Vector2f(x_max,y_max);
+  ROS_INFO("Truncated Point = (%f, %f)", truncated_point.x(), truncated_point.y());
+  
+  // if (MapStraightLineIntersection(parent_loc, truncated_point)) {
+  //   // this stops node from being added to graph
+  //   new_node.parent_id = "";
+  // }
+
+  std::string id = to_string(x_max) + "," + to_string(y_max) + "," + to_string(theta_maxtan);
   new_node.id = id;
   new_node.loc = truncated_point;
-  new_node.theta = 0.0;
+  new_node.theta = theta_maxtan;
+  new_node.radius = R;
+  new_node.center_of_turn = Eigen::Vector2f(x_T,y_T);
+  new_node.theta_start = theta_s;
+  new_node.theta_end = theta_e;
   return new_node;
 }
+
 
 void Navigation::Run() {
 
   // Clear previous visualizations.
   visualization::ClearVisualizationMsg(local_viz_msg_);
   visualization::ClearVisualizationMsg(global_viz_msg_);
+  
+  if (graph.size() > 2){
+    exit(3);
+  }
   
   goal_found = (goal_node.parent_id != "");
 
@@ -554,6 +651,7 @@ void Navigation::Run() {
   DrawTarget(goal_found);
   DrawGraph();
 
+  
   if (goal_initialized && !goal_found) {
 
     sampled_point = SamplePointFromMap();
@@ -564,7 +662,8 @@ void Navigation::Run() {
       graph[new_node.id] = new_node;
     }
     
-    FindPathToGoal();
+    
+    // FindPathToGoal();
   }
 
   // Add timestamps to all messages.
