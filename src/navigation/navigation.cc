@@ -470,6 +470,7 @@ void DrawGraph(){
     parent_id_ptr = graph.find(node.parent_id);
     if (parent_id_ptr != graph.end()) {
       visualization::DrawArc(node.center_of_turn, node.radius, node.theta_start, node.theta_end, 0x68ad7b, global_viz_msg_);
+      // visualization::DrawArc(node.center_of_turn, 0.1, 0, 2.0 * M_PI, 0x68ad7b, global_viz_msg_);
       // Straight line from node to node
       // visualization::DrawLine(node.loc, parent_id_ptr->second.loc,0x68ad7b,global_viz_msg_);
     }
@@ -525,6 +526,8 @@ Node Navigation::ProcessSampledPoint(Eigen::Vector2f& sample_point){
   // calculate the nearest node as the candidate parent node
   // *TODO: Maybe use a different heuristic like the point 
   // distance before intersection with a wall
+  // possibly iterate over all nodes so far to get the longest path
+  // and/or gets closer to the goal
   float_t min_dist = 150.0;
   for (auto const& node_itr : graph) {
     float_t dist = (node_itr.second.loc - sample_point).norm();
@@ -544,30 +547,54 @@ Node Navigation::ProcessSampledPoint(Eigen::Vector2f& sample_point){
   float_t L_max = max_truncation_dist;
   float_t x_s = sample_point.x();
   float_t y_s = sample_point.y();
+  ROS_INFO("---------------------");
+  ROS_INFO("x_r = %f", x_r);
+  ROS_INFO("y_r = %f", y_r);
+  ROS_INFO("theta_r = %f", theta_r);
+  ROS_INFO("L_max = %f", L_max);
+  ROS_INFO("x_s = %f", x_s);
+  ROS_INFO("y_s = %f", y_s);
 
   float_t x_h = x_r + cos(theta_r);
   float_t y_h = y_r + sin(theta_r);
   float_t m_hr = (y_h - y_r)/(x_h - x_r);
   float_t b_hr = y_r - m_hr * x_r;
+  ROS_INFO("x_h = %f", x_h);
+  ROS_INFO("y_h = %f", y_h);
+  ROS_INFO("m_hr = %f", m_hr);
+  ROS_INFO("b_hr = %f", b_hr);
 
-  float_t m_T = -(x_h - x_r)/(y_h - y_r);
+  float_t m_T;
+  if (abs(y_h - y_r) == 0) {
+    m_T = -(x_h - x_r)/(y_h - y_r + 1e-6); // don't divide by zero
+  } else {
+    m_T = -(x_h - x_r)/(y_h - y_r);
+  }
   float_t b_T = y_r - m_T * x_r;
+  ROS_INFO("m_T = %f", m_T);
+  ROS_INFO("b_T = %f", b_T);
 
   float_t x_T = (-2.0 * b_T * y_r + 2.0 * b_T * y_s + pow(x_r,2.0) + pow(y_r,2.0) - pow(y_s,2.0) - pow(x_s,2.0)) / (2.0 * x_r + 2 * y_r * m_T - 2.0 * y_s * m_T - 2.0 * x_s);
   float_t y_T = m_T * x_T + b_T;
+  ROS_INFO("x_T = %f", x_T);
+  ROS_INFO("y_T = %f", y_T);
 
   float_t R = sqrt(pow(x_T - x_r, 2.0) + pow(y_T - y_r, 2.0));
+  ROS_INFO("R = %f", R);
 
   float_t s;
-  float_t s_0 = (-y_s - m_hr * x_s - b_hr) / abs(y_s - m_hr * x_s - b_hr);
+  float_t s_0 = -(y_s - m_hr * x_s - b_hr) / abs(y_s - m_hr * x_s - b_hr);  
   if (abs(theta_r) <= M_PI/2.0) {
     s = s_0;
   } else {
     s = -s_0;
   }
+  ROS_INFO("s_0 = %f", s_0);
+  ROS_INFO("s = %f", s);
 
   float_t theta_tan = atan2(s * (x_T - x_s), s * (y_s - y_T));
-  
+  ROS_INFO("theta_tan = %f", theta_tan);
+
   float_t theta_d;
   float_t theta_d_0 = theta_r - theta_tan;
   if (abs(theta_d_0) < M_PI) {
@@ -575,13 +602,20 @@ Node Navigation::ProcessSampledPoint(Eigen::Vector2f& sample_point){
   } else {
     theta_d = theta_d_0 - ((theta_d_0) / abs(theta_d_0)) * 2.0 * M_PI;
   }
+  ROS_INFO("theta_d_0 = %f", theta_d_0);
+  ROS_INFO("theta_d = %f", theta_d);
 
   float_t L = s * R * theta_d;
   float_t theta_max = s * min(abs(L_max / R), abs(theta_d));
   float_t d_max = sqrt(2.0 * pow(R,2.0) * (1 - cos(theta_max)));
+  ROS_INFO("L = %f", L);
+  ROS_INFO("theta_max = %f", theta_max);
+  ROS_INFO("d_max = %f", d_max);
 
   float_t B_f = ((M_PI - theta_max) / 2.0) - (M_PI / 2.0 - theta_r);
   float_t B_b = (M_PI - theta_max) - (B_f + (M_PI / 2.0));
+  ROS_INFO("B_f = %f", B_f);
+  ROS_INFO("B_b = %f", B_b);
 
   float_t x_max;
   float_t y_max;
@@ -592,24 +626,32 @@ Node Navigation::ProcessSampledPoint(Eigen::Vector2f& sample_point){
     x_max = x_r - d_max * sin(B_b);
     y_max = y_r - d_max * cos(B_b);
   }
+  ROS_INFO("x_max = %f", x_max);
+  ROS_INFO("y_max = %f", y_max);
 
   float_t theta_maxtan = atan2(s * (x_T - x_max), s * (y_max - y_T));
-  
+  ROS_INFO("theta_maxtan = %f", theta_maxtan);
+
   float_t theta_s;
-  float_t theta_s_0 = theta_r + M_PI / 2.0;
+  float_t theta_s_0 = theta_r + s * M_PI / 2.0;
   if (abs(theta_s_0) < M_PI){
     theta_s = theta_s_0;
   } else {
     theta_s = theta_s_0 - (theta_s_0 / abs(theta_s_0)) * 2.0 * M_PI;
   }
+  ROS_INFO("theta_s_0 = %f", theta_s_0);
+  ROS_INFO("theta_s = %f", theta_s);
 
   float_t theta_e;
-  float_t theta_e_0 = theta_maxtan - M_PI / 2.0;
+  float_t theta_e_0 = theta_maxtan + s * M_PI / 2.0;
   if (abs(theta_e_0) < M_PI){
     theta_e = theta_e_0;
   } else {
     theta_e = theta_e_0 - (theta_e_0 / abs(theta_e_0)) * 2.0 * M_PI;
   }
+  ROS_INFO("theta_e_0 = %f", theta_e_0);
+  ROS_INFO("theta_e = %f", theta_e);
+  ROS_INFO("-------------------");
 
   //-----END COMPLICATED SECTION FOR CURVES
 
@@ -617,19 +659,57 @@ Node Navigation::ProcessSampledPoint(Eigen::Vector2f& sample_point){
   truncated_point = Eigen::Vector2f(x_max,y_max);
   ROS_INFO("Truncated Point = (%f, %f)", truncated_point.x(), truncated_point.y());
   
-  // if (MapStraightLineIntersection(parent_loc, truncated_point)) {
-  //   // this stops node from being added to graph
-  //   new_node.parent_id = "";
-  // }
-
+  if ((R < min_turn_radius_) || // calculated turn radius is too tight
+          (MapStraightLineIntersection(parent_loc, truncated_point))) { // calculated path has an intersection with the map
+    // this stops node from being added to graph
+    new_node.parent_id = "";
+  }
+  
   std::string id = to_string(x_max) + "," + to_string(y_max) + "," + to_string(theta_maxtan);
   new_node.id = id;
   new_node.loc = truncated_point;
   new_node.theta = theta_maxtan;
   new_node.radius = R;
   new_node.center_of_turn = Eigen::Vector2f(x_T,y_T);
-  new_node.theta_start = theta_s;
-  new_node.theta_end = theta_e;
+  // ensure the arc gets drawn in the correct direction depending 
+  // on the orientation of several items such as s, L, and theta_r
+  if (theta_s > 0){
+    if (L < 0) {
+      if (abs(theta_r) > M_PI / 2.0){
+        new_node.theta_start = theta_e;
+        new_node.theta_end = theta_s;
+      } else {
+        new_node.theta_start = theta_s;
+        new_node.theta_end = theta_e;
+      }
+    } else {
+      if (abs(theta_r) > M_PI / 2.0){
+        new_node.theta_start = theta_s;
+        new_node.theta_end = theta_e;
+      } else {
+        new_node.theta_start = theta_e;
+        new_node.theta_end = theta_s;
+      }
+    }
+  } else {
+    if (L < 0){
+      if (abs(theta_r) > M_PI / 2.0){
+        new_node.theta_start = theta_s;
+        new_node.theta_end = theta_e;
+      } else {
+        new_node.theta_start = theta_e;
+        new_node.theta_end = theta_s;
+      }
+    } else{
+      if (abs(theta_r) > M_PI / 2.0){
+        new_node.theta_start = theta_e;
+        new_node.theta_end = theta_s;
+      } else {
+        new_node.theta_start = theta_s;
+        new_node.theta_end = theta_e;
+      }
+    }
+  }
   return new_node;
 }
 
@@ -640,10 +720,6 @@ void Navigation::Run() {
   visualization::ClearVisualizationMsg(local_viz_msg_);
   visualization::ClearVisualizationMsg(global_viz_msg_);
   
-  if (graph.size() > 2){
-    exit(3);
-  }
-  
   goal_found = (goal_node.parent_id != "");
 
   drive_msg_.velocity = 0.0;
@@ -651,7 +727,6 @@ void Navigation::Run() {
   DrawTarget(goal_found);
   DrawGraph();
 
-  
   if (goal_initialized && !goal_found) {
 
     sampled_point = SamplePointFromMap();
@@ -661,7 +736,6 @@ void Navigation::Run() {
     if (new_node.parent_id != ""){
       graph[new_node.id] = new_node;
     }
-    
     
     // FindPathToGoal();
   }
@@ -674,6 +748,11 @@ void Navigation::Run() {
   viz_pub_.publish(local_viz_msg_);
   viz_pub_.publish(global_viz_msg_);
   drive_pub_.publish(drive_msg_);
+
+  if (graph.size() > 100){
+    exit(3);
+  }
+
 }
 
 }  // namespace navigation
