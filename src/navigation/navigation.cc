@@ -657,7 +657,8 @@ Node Navigation::ProcessSampledPoint(Eigen::Vector2f& sample_point){
   ROS_INFO("Truncated Point = (%f, %f)", truncated_point.x(), truncated_point.y());
   
   if ((R < min_turn_radius_) || // calculated turn radius is too tight
-          (MapStraightLineIntersection(parent_loc, truncated_point))) { // calculated path has an intersection with the map
+          (MapStraightLineIntersection(parent_loc, truncated_point)) ||
+              (parent_loc - truncated_point).norm() < 0.1) { // calculated path has an intersection with the map
     // this stops node from being added to graph
     new_node.parent_id = "";
   }
