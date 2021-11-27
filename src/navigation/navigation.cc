@@ -216,6 +216,11 @@ void Navigation::UpdateLocation(const Eigen::Vector2f& loc, float angle) {
     start_node.loc = loc;
     start_node.theta = angle;
     start_node.parent_id = "*";
+    start_node.radius = 0.0;
+    start_node.center_of_turn = Eigen::Vector2f(0.0,0.0);
+    start_node.sampled_point = Eigen::Vector2f(0.0,0.0);
+    start_node.theta_start = 0.0;
+    start_node.theta_end = 0.0;
     graph[id] = start_node;
     ROS_INFO("Start Node added to graph (%f,%f)", loc.x(), loc.y());
     
@@ -402,8 +407,8 @@ Eigen::Vector2f SamplePointFromMap() {
   if (rng_.UniformRandom(0.0, 1.0) > 0.95){
     // "Exploration Bias" 5% of the time, greedily 
     //    attempt to get closer to the global graph
-    x_val = goal_node.loc.x();
-    y_val = goal_node.loc.y();
+    x_val = goal_node.loc.x() + rng_.UniformRandom(-2.0, 2.0);
+    y_val = goal_node.loc.y() + rng_.UniformRandom(-2.0, 2.0);
   } else {
     x_val = rng_.UniformRandom(map_x_min, map_x_max);
     y_val = rng_.UniformRandom(map_y_min, map_y_max);
@@ -417,15 +422,18 @@ void DrawNode(Node& node) {
 }
 
 void PrintNode(Node& node){
-  ROS_INFO("id = %s",node.id.c_str());
-  ROS_INFO("loc = (%f, %f)", node.loc.x(), node.loc.y());
-  ROS_INFO("theta = %f", node.theta);
-  ROS_INFO("parent_id = %s",node.parent_id.c_str());
-  ROS_INFO("cot = (%f, %f)", node.center_of_turn.x(), node.center_of_turn.y());
-  ROS_INFO("radius = %f", node.radius);
-  ROS_INFO("theta_start = %f", node.theta_start);
-  ROS_INFO("theta_end = %f", node.theta_end);
-  ROS_INFO("------------------");
+  if (node.radius > 100) {
+    ROS_INFO("id = %s",node.id.c_str());
+    ROS_INFO("loc = (%f, %f)", node.loc.x(), node.loc.y());
+    ROS_INFO("theta = %f", node.theta);
+    ROS_INFO("parent_id = %s",node.parent_id.c_str());
+    ROS_INFO("cot = (%f, %f)", node.center_of_turn.x(), node.center_of_turn.y());
+    ROS_INFO("radius = %f", node.radius);
+    ROS_INFO("theta_start = %f", node.theta_start);
+    ROS_INFO("theta_end = %f", node.theta_end);
+    ROS_INFO("sampled_point = (%f, %f)", node.sampled_point.x(), node.sampled_point.y());
+    ROS_INFO("------------------");
+  }
 }
 
 void Navigation::DrawTarget(bool& found) {
@@ -436,7 +444,7 @@ void Navigation::DrawTarget(bool& found) {
     color = 0xcc0c0c;
   }
   if (goal_node.loc != Eigen::Vector2f(0.0,0.0)){
-    ROS_INFO("Goal Location = (%f, %f)", goal_node.loc.x(), goal_node.loc.y());
+    // ROS_INFO("Goal Location = (%f, %f)", goal_node.loc.x(), goal_node.loc.y());
     visualization::DrawArc(nav_goal_loc_, max_truncation_dist, 0.0, 2.0 * M_PI, color, global_viz_msg_);
     visualization::DrawArrow(nav_goal_loc_, nav_goal_angle_, 0xcc0c0c, global_viz_msg_);
   }
@@ -660,6 +668,7 @@ Node Navigation::ProcessSampledPoint(Eigen::Vector2f& sample_point){
   new_node.theta = theta_maxtan;
   new_node.radius = R;
   new_node.center_of_turn = Eigen::Vector2f(x_T,y_T);
+  new_node.sampled_point = sample_point;
   // ensure the arc gets drawn in the correct direction depending 
   // on the orientation of several items such as s, L, and theta_r
   if (theta_s > 0){

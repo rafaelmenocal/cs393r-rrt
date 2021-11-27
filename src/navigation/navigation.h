@@ -44,6 +44,7 @@ struct Node {
     float_t radius; // radius of turning arc
     float_t theta_start; // start theta from COT to parent_node
     float_t theta_end; // end theta from COT to this node
+    Eigen::Vector2f sampled_point; 
   };
 
 namespace navigation {
