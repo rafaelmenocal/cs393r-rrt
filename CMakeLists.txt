@@ -64,3 +64,18 @@ ADD_EXECUTABLE(simple_queue_test
 ADD_EXECUTABLE(cimg_example
                src/cimg_example.cc)
 TARGET_LINK_LIBRARIES(cimg_example shared_library ${libs} X11)
+
+################################
+# GTest
+################################
+ADD_SUBDIRECTORY (googletest-release-1.11.0)
+enable_testing()
+
+################################
+# Unit Tests
+################################
+# Add test cpp file
+add_executable(geometry_test src/navigation/geometry_test.cpp)
+# Link test executable against gtest & gtest_main
+target_link_libraries(geometry_test gtest gtest_main)
+add_test(geometry_test geometry_test)

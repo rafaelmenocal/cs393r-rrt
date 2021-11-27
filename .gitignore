@@ -3,3 +3,4 @@ build
 bin
 lib
 data
+googletest-release-1.11.0

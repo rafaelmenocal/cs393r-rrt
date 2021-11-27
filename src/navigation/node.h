@@ -1,6 +1,8 @@
 #ifndef __SRC_NAVIGATION_NODE__
 #define __SRC_NAVIGATION_NODE__
 
+#include <string>
+#include <vector>
 #include <math.h>
 
 
