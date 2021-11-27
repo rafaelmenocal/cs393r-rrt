@@ -85,24 +85,13 @@ namespace {
   float map_y_min = -34.0;  
   float map_y_max = 34.0;  
 
-  // struct Node {
-  //   std::string id;
-  //   Eigen::Vector2f loc;
-  //   float_t theta;
-  //   std::string parent_id;
-  //   Eigen::Vector2f turn_point_to_node;
-  // };
-
   std::map<std::string, Node> graph;
-  // std::vector<Eigen::Vector2f> sampled_points;
-  // int num_sampled_points = 50;
   Eigen::Vector2f sampled_point;
   Node goal_node;
   bool goal_initialized = false;
   bool goal_found = false;
-  float_t max_truncation_dist = 2.0;
+  float_t max_truncation_dist = 1.0;
   
-  // Eigen::Vector2f sampled_point;
   unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
   util_random::Random rng_(seed);
 } //namespace
@@ -659,11 +648,11 @@ Node Navigation::ProcessSampledPoint(Eigen::Vector2f& sample_point){
   truncated_point = Eigen::Vector2f(x_max,y_max);
   ROS_INFO("Truncated Point = (%f, %f)", truncated_point.x(), truncated_point.y());
   
-  if ((R < min_turn_radius_) || // calculated turn radius is too tight
-          (MapStraightLineIntersection(parent_loc, truncated_point))) { // calculated path has an intersection with the map
-    // this stops node from being added to graph
-    new_node.parent_id = "";
-  }
+  // if ((R < min_turn_radius_) || // calculated turn radius is too tight
+  //         (MapStraightLineIntersection(parent_loc, truncated_point))) { // calculated path has an intersection with the map
+  //   // this stops node from being added to graph
+  //   new_node.parent_id = "";
+  // }
   
   std::string id = to_string(x_max) + "," + to_string(y_max) + "," + to_string(theta_maxtan);
   new_node.id = id;
@@ -750,6 +739,7 @@ void Navigation::Run() {
   drive_pub_.publish(drive_msg_);
 
   if (graph.size() > 100){
+    ROS_INFO("100 points added to graph.");
     exit(3);
   }
 
