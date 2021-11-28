@@ -134,6 +134,7 @@ class Navigation {
 
   bool MapCurvedLineIntersection(Eigen::Vector2f& loc, Eigen::Vector2f& point);
 
+  Node ProcessSampledPointFromParent(Eigen::Vector2f& sample_point, std::string parent_id);
 
  private:
 

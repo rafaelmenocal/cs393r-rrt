@@ -79,6 +79,7 @@ namespace {
   double del_time;
   bool obstacle_debug = false;
   bool odometry_debug = false;
+  bool process_sample_debug = false;
 
   float map_x_min = -44.0;
   float map_x_max = 44.0; 
@@ -90,7 +91,10 @@ namespace {
   Node goal_node;
   bool goal_initialized = false;
   bool goal_found = false;
-  float_t max_truncation_dist = 1.5;
+  float_t max_truncation_dist = 0.5;
+  float_t min_truncation_dist = 0.01;
+  float_t goal_loc_tolerance = 0.25;
+  float_t goal_theta_tolerance = M_PI / 2.0;
   
   unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
   util_random::Random rng_(seed);
@@ -422,7 +426,7 @@ void DrawNode(Node& node) {
 }
 
 void PrintNode(Node& node){
-  if (node.radius > 100) {
+  if (process_sample_debug) {
     ROS_INFO("id = %s",node.id.c_str());
     ROS_INFO("loc = (%f, %f)", node.loc.x(), node.loc.y());
     ROS_INFO("theta = %f", node.theta);
@@ -482,7 +486,7 @@ bool Navigation::MapStraightLineIntersection(Eigen::Vector2f& loc, Eigen::Vector
       return true;
     }
   }
-  ROS_INFO("No intersection found between (%f,%f) (%f,%f)", loc.x(), loc.y(), point.x(), point.y());
+  // ROS_INFO("No intersection found between (%f,%f) (%f,%f)", loc.x(), loc.y(), point.x(), point.y());
   return false;
 }
 
@@ -491,30 +495,240 @@ bool Navigation::MapCurvedLineIntersection(Eigen::Vector2f& loc, Eigen::Vector2f
 }
 
 void Navigation::FindPathToGoal() {
-  Node closest_node;
   Eigen::Vector2f goal_loc = goal_node.loc;
+  float_t goal_theta = goal_node.theta;
 
-  float_t min_dist = 150.0;
+  Node new_node;
+
   for (auto const& node_itr : graph) {
-    float_t d = (node_itr.second.loc - goal_loc).norm();
-    if (d < min_dist){
-      min_dist = d;
-      closest_node = graph[node_itr.second.id];
+    std::string candidate_parent_id = node_itr.second.id;
+    new_node = ProcessSampledPointFromParent(goal_loc, candidate_parent_id);
+
+    if (new_node.parent_id != ""){
+      ROS_INFO("Candidate Node to Goal:");
+      ROS_INFO("node id = %s", new_node.id.c_str());
+      ROS_INFO("theta difference = %f", goal_theta - new_node.theta);
+      ROS_INFO("loc difference = %f", (new_node.loc - goal_loc).norm());
+    }
+    if (new_node.parent_id != "" &&
+          (new_node.theta <= goal_theta + goal_theta_tolerance &&
+              new_node.theta >= goal_theta - goal_theta_tolerance) &&
+                (new_node.loc - goal_loc).norm() <= goal_loc_tolerance){
+      graph[new_node.id] = new_node;
+      goal_node.parent_id = new_node.id;
+      ROS_INFO("Goal found");
+      return;
     }
   }
-
-  ROS_INFO("Distance To Goal = %f", min_dist);
-  if (!MapStraightLineIntersection(closest_node.loc, goal_loc) &&
-          min_dist <= max_truncation_dist) {
-    goal_node.parent_id = closest_node.id;
-  }
-
+  ROS_INFO("No path to goal found for all nodes in graph");
 }
 
 Eigen::Vector2f CalculateStraightTruncation(Eigen::Vector2f& loc, Eigen::Vector2f& point, float_t max_dist){
   float_t dist = (loc - point).norm();
   return Eigen::Vector2f(loc.x() + max_dist * (point.x() - loc.x()) / dist, loc.y() + max_dist * (point.y() - loc.y()) / dist);
 }
+
+//begin general process sampled point
+Node Navigation::ProcessSampledPointFromParent(Eigen::Vector2f& sample_point, std::string parent_id){
+  Node new_node;
+  Eigen::Vector2f truncated_point;
+  new_node.parent_id = parent_id;
+  
+  Eigen::Vector2f parent_loc = graph[parent_id].loc;
+  float_t parent_theta = graph[parent_id].theta;
+  
+  //-----BEGIN COMPLICATED SECTION FOR CURVES
+  float_t x_r = parent_loc.x();
+  float_t y_r = parent_loc.y();
+  float_t theta_r = parent_theta;
+  float_t L_max = max_truncation_dist;
+  float_t x_s = sample_point.x();
+  float_t y_s = sample_point.y();
+
+  float_t x_h = x_r + cos(theta_r);
+  float_t y_h = y_r + sin(theta_r);
+  float_t m_hr = (y_h - y_r)/(x_h - x_r);
+  float_t b_hr = y_r - m_hr * x_r;
+
+  float_t m_T;
+  if (abs(y_h - y_r) == 0) {
+    m_T = -(x_h - x_r)/(y_h - y_r + 1e-6); // don't divide by zero
+  } else {
+    m_T = -(x_h - x_r)/(y_h - y_r);
+  }
+  float_t b_T = y_r - m_T * x_r;
+
+  float_t x_T = (-2.0 * b_T * y_r + 2.0 * b_T * y_s + pow(x_r,2.0) + pow(y_r,2.0) - pow(y_s,2.0) - pow(x_s,2.0)) / (2.0 * x_r + 2 * y_r * m_T - 2.0 * y_s * m_T - 2.0 * x_s);
+  float_t y_T = m_T * x_T + b_T;
+
+  float_t R = sqrt(pow(x_T - x_r, 2.0) + pow(y_T - y_r, 2.0));
+
+  float_t s;
+  float_t s_0 = -(y_s - m_hr * x_s - b_hr) / abs(y_s - m_hr * x_s - b_hr);  
+  if (abs(theta_r) <= M_PI/2.0) {
+    s = s_0;
+  } else {
+    s = -s_0;
+  }
+
+  float_t theta_tan = atan2(s * (x_T - x_s), s * (y_s - y_T));
+
+  float_t theta_d;
+  float_t theta_d_0 = theta_r - theta_tan;
+  if (abs(theta_d_0) < M_PI) {
+    theta_d = theta_d_0;
+  } else {
+    theta_d = theta_d_0 - ((theta_d_0) / abs(theta_d_0)) * 2.0 * M_PI;
+  }
+
+  float_t L = s * R * theta_d;
+  float_t theta_max = s * min(abs(L_max / R), abs(theta_d));
+  float_t d_max = sqrt(2.0 * pow(R,2.0) * (1 - cos(theta_max)));
+
+  float_t B_f = ((M_PI - theta_max) / 2.0) - (M_PI / 2.0 - theta_r);
+  float_t B_b = (M_PI - theta_max) - (B_f + (M_PI / 2.0));
+
+  float_t x_max;
+  float_t y_max;
+  if (L >= 0.0) {
+    x_max = x_r + d_max * cos(B_f);
+    y_max = y_r + d_max * sin(B_f);
+  } else {
+    x_max = x_r - d_max * sin(B_b);
+    y_max = y_r - d_max * cos(B_b);
+  }
+
+  float_t theta_maxtan = atan2(s * (x_T - x_max), s * (y_max - y_T));
+
+  float_t theta_s;
+  float_t theta_s_0 = theta_r + s * M_PI / 2.0;
+  if (abs(theta_s_0) < M_PI){
+    theta_s = theta_s_0;
+  } else {
+    theta_s = theta_s_0 - (theta_s_0 / abs(theta_s_0)) * 2.0 * M_PI;
+  }
+
+  float_t theta_e;
+  float_t theta_e_0 = theta_maxtan + s * M_PI / 2.0;
+  if (abs(theta_e_0) < M_PI){
+    theta_e = theta_e_0;
+  } else {
+    theta_e = theta_e_0 - (theta_e_0 / abs(theta_e_0)) * 2.0 * M_PI;
+  }
+
+  truncated_point = Eigen::Vector2f(x_max,y_max);
+  if (process_sample_debug){
+    ROS_INFO("---------------------");
+    ROS_INFO("x_r = %f", x_r);
+    ROS_INFO("y_r = %f", y_r);
+    ROS_INFO("theta_r = %f", theta_r);
+    ROS_INFO("L_max = %f", L_max);
+    ROS_INFO("x_s = %f", x_s);
+    ROS_INFO("y_s = %f", y_s);
+
+    ROS_INFO("x_h = %f", x_h);
+    ROS_INFO("y_h = %f", y_h);
+    ROS_INFO("m_hr = %f", m_hr);
+    ROS_INFO("b_hr = %f", b_hr);
+
+    ROS_INFO("m_T = %f", m_T);
+    ROS_INFO("b_T = %f", b_T);
+
+    ROS_INFO("x_T = %f", x_T);
+    ROS_INFO("y_T = %f", y_T);
+
+    ROS_INFO("R = %f", R);
+
+    ROS_INFO("s_0 = %f", s_0);
+    ROS_INFO("s = %f", s);
+
+    ROS_INFO("theta_tan = %f", theta_tan);
+
+    ROS_INFO("theta_d_0 = %f", theta_d_0);
+    ROS_INFO("theta_d = %f", theta_d);
+
+    ROS_INFO("L = %f", L);
+    ROS_INFO("theta_max = %f", theta_max);
+    ROS_INFO("d_max = %f", d_max);
+
+
+    ROS_INFO("B_f = %f", B_f);
+    ROS_INFO("B_b = %f", B_b);
+
+    ROS_INFO("x_max = %f", x_max);
+    ROS_INFO("y_max = %f", y_max);
+
+    ROS_INFO("theta_maxtan = %f", theta_maxtan);
+
+    ROS_INFO("theta_s_0 = %f", theta_s_0);
+    ROS_INFO("theta_s = %f", theta_s);
+
+    ROS_INFO("theta_e_0 = %f", theta_e_0);
+    ROS_INFO("theta_e = %f", theta_e);
+    ROS_INFO("-------------------");
+
+    ROS_INFO("Truncated Point = (%f, %f)", truncated_point.x(), truncated_point.y());
+  }
+
+  //-----END COMPLICATED SECTION FOR CURVES
+
+  if ((R < min_turn_radius_) || // calculated turn radius is too tight
+          (MapStraightLineIntersection(parent_loc, truncated_point)) ||
+              (parent_loc - truncated_point).norm() < min_truncation_dist) { // calculated path has an intersection with the map
+    // this stops node from being added to graph
+    new_node.parent_id = "";
+  }
+  
+  std::string id = to_string(x_max) + "," + to_string(y_max) + "," + to_string(theta_maxtan);
+  new_node.id = id;
+  new_node.loc = truncated_point;
+  new_node.theta = theta_maxtan;
+  new_node.radius = R;
+  new_node.center_of_turn = Eigen::Vector2f(x_T,y_T);
+  new_node.sampled_point = sample_point;
+  // ensure the arc gets drawn in the correct direction depending 
+  // on the orientation of several items such as s, L, and theta_r
+  if (theta_s > 0){
+    if (L < 0) {
+      if (abs(theta_r) > M_PI / 2.0){
+        new_node.theta_start = theta_e;
+        new_node.theta_end = theta_s;
+      } else {
+        new_node.theta_start = theta_s;
+        new_node.theta_end = theta_e;
+      }
+    } else {
+      if (abs(theta_r) > M_PI / 2.0){
+        new_node.theta_start = theta_s;
+        new_node.theta_end = theta_e;
+      } else {
+        new_node.theta_start = theta_e;
+        new_node.theta_end = theta_s;
+      }
+    }
+  } else {
+    if (L < 0){
+      if (abs(theta_r) > M_PI / 2.0){
+        new_node.theta_start = theta_s;
+        new_node.theta_end = theta_e;
+      } else {
+        new_node.theta_start = theta_e;
+        new_node.theta_end = theta_s;
+      }
+    } else{
+      if (abs(theta_r) > M_PI / 2.0){
+        new_node.theta_start = theta_e;
+        new_node.theta_end = theta_s;
+      } else {
+        new_node.theta_start = theta_s;
+        new_node.theta_end = theta_e;
+      }
+    }
+  }
+  return new_node;
+}
+// ---- end general process sampled point
+
 
 Node Navigation::ProcessSampledPoint(Eigen::Vector2f& sample_point){
   Node new_node;
@@ -544,22 +758,11 @@ Node Navigation::ProcessSampledPoint(Eigen::Vector2f& sample_point){
   float_t L_max = max_truncation_dist;
   float_t x_s = sample_point.x();
   float_t y_s = sample_point.y();
-  ROS_INFO("---------------------");
-  ROS_INFO("x_r = %f", x_r);
-  ROS_INFO("y_r = %f", y_r);
-  ROS_INFO("theta_r = %f", theta_r);
-  ROS_INFO("L_max = %f", L_max);
-  ROS_INFO("x_s = %f", x_s);
-  ROS_INFO("y_s = %f", y_s);
 
   float_t x_h = x_r + cos(theta_r);
   float_t y_h = y_r + sin(theta_r);
   float_t m_hr = (y_h - y_r)/(x_h - x_r);
   float_t b_hr = y_r - m_hr * x_r;
-  ROS_INFO("x_h = %f", x_h);
-  ROS_INFO("y_h = %f", y_h);
-  ROS_INFO("m_hr = %f", m_hr);
-  ROS_INFO("b_hr = %f", b_hr);
 
   float_t m_T;
   if (abs(y_h - y_r) == 0) {
@@ -568,16 +771,11 @@ Node Navigation::ProcessSampledPoint(Eigen::Vector2f& sample_point){
     m_T = -(x_h - x_r)/(y_h - y_r);
   }
   float_t b_T = y_r - m_T * x_r;
-  ROS_INFO("m_T = %f", m_T);
-  ROS_INFO("b_T = %f", b_T);
 
   float_t x_T = (-2.0 * b_T * y_r + 2.0 * b_T * y_s + pow(x_r,2.0) + pow(y_r,2.0) - pow(y_s,2.0) - pow(x_s,2.0)) / (2.0 * x_r + 2 * y_r * m_T - 2.0 * y_s * m_T - 2.0 * x_s);
   float_t y_T = m_T * x_T + b_T;
-  ROS_INFO("x_T = %f", x_T);
-  ROS_INFO("y_T = %f", y_T);
 
   float_t R = sqrt(pow(x_T - x_r, 2.0) + pow(y_T - y_r, 2.0));
-  ROS_INFO("R = %f", R);
 
   float_t s;
   float_t s_0 = -(y_s - m_hr * x_s - b_hr) / abs(y_s - m_hr * x_s - b_hr);  
@@ -586,11 +784,8 @@ Node Navigation::ProcessSampledPoint(Eigen::Vector2f& sample_point){
   } else {
     s = -s_0;
   }
-  ROS_INFO("s_0 = %f", s_0);
-  ROS_INFO("s = %f", s);
 
   float_t theta_tan = atan2(s * (x_T - x_s), s * (y_s - y_T));
-  ROS_INFO("theta_tan = %f", theta_tan);
 
   float_t theta_d;
   float_t theta_d_0 = theta_r - theta_tan;
@@ -599,20 +794,13 @@ Node Navigation::ProcessSampledPoint(Eigen::Vector2f& sample_point){
   } else {
     theta_d = theta_d_0 - ((theta_d_0) / abs(theta_d_0)) * 2.0 * M_PI;
   }
-  ROS_INFO("theta_d_0 = %f", theta_d_0);
-  ROS_INFO("theta_d = %f", theta_d);
 
   float_t L = s * R * theta_d;
   float_t theta_max = s * min(abs(L_max / R), abs(theta_d));
   float_t d_max = sqrt(2.0 * pow(R,2.0) * (1 - cos(theta_max)));
-  ROS_INFO("L = %f", L);
-  ROS_INFO("theta_max = %f", theta_max);
-  ROS_INFO("d_max = %f", d_max);
 
   float_t B_f = ((M_PI - theta_max) / 2.0) - (M_PI / 2.0 - theta_r);
   float_t B_b = (M_PI - theta_max) - (B_f + (M_PI / 2.0));
-  ROS_INFO("B_f = %f", B_f);
-  ROS_INFO("B_b = %f", B_b);
 
   float_t x_max;
   float_t y_max;
@@ -623,11 +811,8 @@ Node Navigation::ProcessSampledPoint(Eigen::Vector2f& sample_point){
     x_max = x_r - d_max * sin(B_b);
     y_max = y_r - d_max * cos(B_b);
   }
-  ROS_INFO("x_max = %f", x_max);
-  ROS_INFO("y_max = %f", y_max);
 
   float_t theta_maxtan = atan2(s * (x_T - x_max), s * (y_max - y_T));
-  ROS_INFO("theta_maxtan = %f", theta_maxtan);
 
   float_t theta_s;
   float_t theta_s_0 = theta_r + s * M_PI / 2.0;
@@ -636,8 +821,6 @@ Node Navigation::ProcessSampledPoint(Eigen::Vector2f& sample_point){
   } else {
     theta_s = theta_s_0 - (theta_s_0 / abs(theta_s_0)) * 2.0 * M_PI;
   }
-  ROS_INFO("theta_s_0 = %f", theta_s_0);
-  ROS_INFO("theta_s = %f", theta_s);
 
   float_t theta_e;
   float_t theta_e_0 = theta_maxtan + s * M_PI / 2.0;
@@ -646,19 +829,66 @@ Node Navigation::ProcessSampledPoint(Eigen::Vector2f& sample_point){
   } else {
     theta_e = theta_e_0 - (theta_e_0 / abs(theta_e_0)) * 2.0 * M_PI;
   }
-  ROS_INFO("theta_e_0 = %f", theta_e_0);
-  ROS_INFO("theta_e = %f", theta_e);
-  ROS_INFO("-------------------");
+
+  truncated_point = Eigen::Vector2f(x_max,y_max);
+  if (process_sample_debug){
+    ROS_INFO("---------------------");
+    ROS_INFO("x_r = %f", x_r);
+    ROS_INFO("y_r = %f", y_r);
+    ROS_INFO("theta_r = %f", theta_r);
+    ROS_INFO("L_max = %f", L_max);
+    ROS_INFO("x_s = %f", x_s);
+    ROS_INFO("y_s = %f", y_s);
+
+    ROS_INFO("x_h = %f", x_h);
+    ROS_INFO("y_h = %f", y_h);
+    ROS_INFO("m_hr = %f", m_hr);
+    ROS_INFO("b_hr = %f", b_hr);
+
+    ROS_INFO("m_T = %f", m_T);
+    ROS_INFO("b_T = %f", b_T);
+
+    ROS_INFO("x_T = %f", x_T);
+    ROS_INFO("y_T = %f", y_T);
+
+    ROS_INFO("R = %f", R);
+
+    ROS_INFO("s_0 = %f", s_0);
+    ROS_INFO("s = %f", s);
+
+    ROS_INFO("theta_tan = %f", theta_tan);
+
+    ROS_INFO("theta_d_0 = %f", theta_d_0);
+    ROS_INFO("theta_d = %f", theta_d);
+
+    ROS_INFO("L = %f", L);
+    ROS_INFO("theta_max = %f", theta_max);
+    ROS_INFO("d_max = %f", d_max);
+
+
+    ROS_INFO("B_f = %f", B_f);
+    ROS_INFO("B_b = %f", B_b);
+
+    ROS_INFO("x_max = %f", x_max);
+    ROS_INFO("y_max = %f", y_max);
+
+    ROS_INFO("theta_maxtan = %f", theta_maxtan);
+
+    ROS_INFO("theta_s_0 = %f", theta_s_0);
+    ROS_INFO("theta_s = %f", theta_s);
+
+    ROS_INFO("theta_e_0 = %f", theta_e_0);
+    ROS_INFO("theta_e = %f", theta_e);
+    ROS_INFO("-------------------");
+
+    ROS_INFO("Truncated Point = (%f, %f)", truncated_point.x(), truncated_point.y());
+  }
 
   //-----END COMPLICATED SECTION FOR CURVES
 
-  // truncated_point = CalculateStraightTruncation(parent_loc, sample_point, max_truncation_dist);
-  truncated_point = Eigen::Vector2f(x_max,y_max);
-  ROS_INFO("Truncated Point = (%f, %f)", truncated_point.x(), truncated_point.y());
-  
   if ((R < min_turn_radius_) || // calculated turn radius is too tight
           (MapStraightLineIntersection(parent_loc, truncated_point)) ||
-              (parent_loc - truncated_point).norm() < 0.1) { // calculated path has an intersection with the map
+              (parent_loc - truncated_point).norm() < min_truncation_dist) { // calculated path has an intersection with the map
     // this stops node from being added to graph
     new_node.parent_id = "";
   }
@@ -736,7 +966,7 @@ void Navigation::Run() {
       graph[new_node.id] = new_node;
     }
     
-    // FindPathToGoal();
+    FindPathToGoal();
   }
 
   // Add timestamps to all messages.
@@ -748,8 +978,8 @@ void Navigation::Run() {
   viz_pub_.publish(global_viz_msg_);
   drive_pub_.publish(drive_msg_);
 
-  if (graph.size() > 200){
-    ROS_INFO("100 points added to graph.");
+  if (graph.size() > 300){
+    ROS_INFO("300 points added to graph.");
     exit(3);
   }
 
