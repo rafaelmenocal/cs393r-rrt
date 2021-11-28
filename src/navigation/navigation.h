@@ -126,6 +126,8 @@ class Navigation {
 
   void FindPathToGoal();
 
+  void GenerateGraphSolution();
+
   Node ProcessSampledPoint(Eigen::Vector2f& sample_point);
 
   vector_map::VectorMap map_;
