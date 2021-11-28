@@ -38,10 +38,6 @@
 #include "shared/ros/ros_helpers.h"
 #include "shared/util/random.h"
 #include "visualization/visualization.h"
-// #include "node.h"
-
-// #include "global_planner.h"
-// #include "graph.h"
 
 using Eigen::Vector2f;
 using amrl_msgs::AckermannCurvatureDriveMsg;
@@ -89,6 +85,7 @@ namespace {
   std::map<std::string, Node> graph;
   std::map<std::string, Node> graph_solution;
   Eigen::Vector2f sampled_point;
+  float_t sampling_spread = 2.0;
   Node goal_node;
   bool goal_initialized = false;
   bool goal_found = false;
@@ -413,14 +410,29 @@ void Navigation::SetNavGoal(const Vector2f& loc, float angle) {
 Eigen::Vector2f SamplePointFromMap() {
   float_t x_val;
   float_t y_val;
-  if (rng_.UniformRandom(0.0, 1.0) > 0.95){
+  float_t alpha;
+
+  float_t randomf = rng_.UniformRandom(0.0, 1.0);
+  if (randomf > 0.95){
     // "Exploration Bias" 5% of the time, greedily 
     //    attempt to get closer to the global graph
-    x_val = goal_node.loc.x() + rng_.UniformRandom(-2.0, 2.0);
-    y_val = goal_node.loc.y() + rng_.UniformRandom(-2.0, 2.0);
+    alpha = rng_.UniformRandom(0.0, 2.0 * M_PI);
+    x_val = goal_node.loc.x() + sampling_spread * cos(alpha);
+    y_val = goal_node.loc.y() + sampling_spread * sin(alpha);
+    ROS_INFO("Sampling Goal Location = (%f, %f)", goal_node.loc.x(), goal_node.loc.y());
+  } else if (randomf < 0.05) {
+    auto node_ptr = graph.begin();
+    int random_index = rng_.RandomInt(0, int(graph.size()));
+    std::advance(node_ptr, random_index);
+    alpha = rng_.UniformRandom(0.0, 2.0 * M_PI);
+
+    x_val = node_ptr->second.loc.x() + sampling_spread * cos(alpha);
+    y_val = node_ptr->second.loc.y() + sampling_spread * sin(alpha);
+    ROS_INFO("Sampling Node Location = (%f, %f)", node_ptr->second.loc.x(),node_ptr->second.loc.y());
   } else {
     x_val = rng_.UniformRandom(map_x_min, map_x_max);
     y_val = rng_.UniformRandom(map_y_min, map_y_max);
+    ROS_INFO("Sampling Map Location.");
   }
   ROS_INFO("Sampled Point = (%f, %f)", x_val, y_val);
   return Eigen::Vector2f(x_val, y_val);
@@ -453,7 +465,6 @@ void Navigation::DrawTarget(bool& found) {
     color = 0xcc0c0c;
   }
   if (goal_node.loc != Eigen::Vector2f(0.0,0.0)){
-    // ROS_INFO("Goal Location = (%f, %f)", goal_node.loc.x(), goal_node.loc.y());
     visualization::DrawArc(nav_goal_loc_, max_truncation_dist, 0.0, 2.0 * M_PI, color, global_viz_msg_);
     visualization::DrawArrow(nav_goal_loc_, nav_goal_angle_, 0xcf25db, global_viz_msg_);
   }
@@ -476,9 +487,6 @@ void DrawGraph(){
     parent_id_ptr = graph.find(node.parent_id);
     if (parent_id_ptr != graph.end()) {
       visualization::DrawArc(node.center_of_turn, node.radius, node.theta_start, node.theta_end, 0x68ad7b, global_viz_msg_);
-      // visualization::DrawArc(node.center_of_turn, 0.1, 0, 2.0 * M_PI, 0x68ad7b, global_viz_msg_);
-      // Straight line from node to node
-      // visualization::DrawLine(node.loc, parent_id_ptr->second.loc,0x68ad7b,global_viz_msg_);
     }
   }
 }
@@ -492,7 +500,6 @@ void DrawGraphSolution(){
     Node node = x.second;
     // PrintNode(node);
     // DrawNode(node);
-
     parent_id_ptr = graph_solution.find(node.parent_id);
     if (parent_id_ptr != graph_solution.end()) {
       visualization::DrawArc(node.center_of_turn, node.radius, node.theta_start, node.theta_end, 0xcc0c0c, global_viz_msg_);
@@ -508,7 +515,6 @@ bool Navigation::MapStraightLineIntersection(Eigen::Vector2f& loc, Eigen::Vector
       return true;
     }
   }
-  // ROS_INFO("No intersection found between (%f,%f) (%f,%f)", loc.x(), loc.y(), point.x(), point.y());
   return false;
 }
 
@@ -537,24 +543,18 @@ void Navigation::FindPathToGoal() {
     std::string candidate_parent_id = node_itr.second.id;
     new_node = ProcessSampledPointFromParent(goal_loc, candidate_parent_id);
 
-    if (new_node.parent_id != ""){
-      ROS_INFO("Candidate Node to Goal:");
-      ROS_INFO("node id = %s", new_node.id.c_str());
-      ROS_INFO("theta difference = %f", goal_theta - new_node.theta);
-      ROS_INFO("loc difference = %f", (new_node.loc - goal_loc).norm());
-    }
     if (new_node.parent_id != "" &&
           (new_node.theta <= goal_theta + goal_theta_tolerance &&
               new_node.theta >= goal_theta - goal_theta_tolerance) &&
                 (new_node.loc - goal_loc).norm() <= goal_loc_tolerance){
       graph[new_node.id] = new_node;
       goal_node.parent_id = new_node.id;
-      ROS_INFO("Goal found");
+      ROS_INFO("Goal found!");
       GenerateGraphSolution();
       return;
     }
   }
-  ROS_INFO("No path to goal found for all nodes in graph");
+  // ROS_INFO("No path to goal found for all nodes in graph");
 }
 
 Eigen::Vector2f CalculateStraightTruncation(Eigen::Vector2f& loc, Eigen::Vector2f& point, float_t max_dist){
