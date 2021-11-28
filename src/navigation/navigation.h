@@ -44,7 +44,12 @@ struct Node {
     float_t radius; // radius of turning arc
     float_t theta_start; // start theta from COT to parent_node
     float_t theta_end; // end theta from COT to this node
+    float_t path_length; 
+    float_t sp_theta; // final heading if car were to continue to sample_point
     Eigen::Vector2f sampled_point; 
+    float_t goal_theta_min; // only for goal_node
+    float_t goal_theta_max; // only for goal_node
+    bool sp_intersection;
   };
 
 namespace navigation {
@@ -128,7 +133,9 @@ class Navigation {
 
   void GenerateGraphSolution();
 
-  Node ProcessSampledPoint(Eigen::Vector2f& sample_point);
+  Node ProcessSampledPointClosestNode(Eigen::Vector2f& sample_point);
+
+  Node ProcessSampledPointFurthestPath(Eigen::Vector2f& sample_point);
 
   vector_map::VectorMap map_;
 

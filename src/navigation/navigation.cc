@@ -82,14 +82,15 @@ namespace {
   float map_y_min = -34.0;  
   float map_y_max = 34.0;  
 
+  int max_graph_size = 300;
   std::map<std::string, Node> graph;
   std::map<std::string, Node> graph_solution;
   Eigen::Vector2f sampled_point;
-  float_t sampling_spread = 2.0;
+  float_t sampling_spread = 1.5;
   Node goal_node;
   bool goal_initialized = false;
   bool goal_found = false;
-  float_t max_truncation_dist = 0.5;
+  float_t max_truncation_dist = 1.5;
   float_t min_truncation_dist = 0.01;
   float_t goal_loc_tolerance = 0.25;
   float_t goal_theta_tolerance = M_PI / 2.0;
@@ -205,10 +206,10 @@ float_t CalculateVelocityMsg(const std::vector<Vector2f>& point_cloud_, object_a
 void Navigation::UpdateLocation(const Eigen::Vector2f& loc, float angle) {
   localization_initialized_ = true;
 
-  // Any time the Set Pose is pushed.
+  // Any time the Set Pose button is pushed
   if ((robot_loc_ - loc).norm() >= 0.1){
-    // remove all the nodes from the graph
-    ROS_INFO("Graph cleared.");
+    // remove all the nodes from the graph and graph_solution
+    ROS_INFO("Graph and solution cleared.");
     graph.clear();
     graph_solution.clear();
 
@@ -224,6 +225,9 @@ void Navigation::UpdateLocation(const Eigen::Vector2f& loc, float angle) {
     start_node.sampled_point = Eigen::Vector2f(0.0,0.0);
     start_node.theta_start = 0.0;
     start_node.theta_end = 0.0;
+    start_node.path_length = 0.0;
+    start_node.sp_theta = 0.0;
+    start_node.sp_intersection = false;
     graph[id] = start_node;
     ROS_INFO("Start Node added to graph (%f,%f)", loc.x(), loc.y());
     
@@ -232,8 +236,11 @@ void Navigation::UpdateLocation(const Eigen::Vector2f& loc, float angle) {
     goal_node.loc = Eigen::Vector2f(0.0,0.0);
     goal_node.theta = 0.0;
     goal_node.parent_id = "";
+    goal_node.goal_theta_min = 0.0;
+    goal_node.goal_theta_max = 0.0;
     goal_initialized = false;
     goal_found = false;
+    ROS_INFO("Goal Node Reset.");
   }
 
   robot_loc_ = loc;
@@ -389,38 +396,55 @@ Navigation::Navigation(const string& map_file, const double& latency, ros::NodeH
     new object_avoidance::ObjectAvoidance(car_specs_, odd_num_paths, min_turn_radius_));
 }
 
+// Called anytime the Set Nav Target button is pushed
 void Navigation::SetNavGoal(const Vector2f& loc, float angle) {
-
-  graph_solution.clear();
 
   nav_complete_ = false;
   nav_goal_loc_ = loc;
   nav_goal_angle_ = angle;
 
-  goal_initialized = true;
+  // clear the previous solution
+  graph_solution.clear();
   
+  // update the goal_node information
   goal_node.id = to_string(loc.x()) + "," + to_string(loc.y()) + "," + to_string(angle);
   goal_node.loc = loc;
   goal_node.theta = angle;
   goal_node.parent_id = "";
-  
+  // float_t goal_theta_min = angle - goal_theta_tolerance;
+  // if (goal_theta_min < - M_PI){
+  //   goal_theta_min += 2.0 * M_PI;
+  // }
+  // float_t goal_theta_max = angle + goal_theta_tolerance;
+  // if (goal_theta_max > M_PI){
+  //   goal_theta_max -= 2.0 * M_PI;
+  // }
+  // goal_node.goal_theta_min = goal_theta_min;
+  // goal_node.goal_theta_max = goal_theta_max;
+  goal_node.goal_theta_min = angle - goal_theta_tolerance;
+  goal_node.goal_theta_max = angle + goal_theta_tolerance;
+  goal_initialized = true;
+
   ROS_INFO("Goal Target Added (%f, %f, %f)", loc.x(), loc.y(), angle);
 }
 
+// Return a Randomly Sampled point from the map
 Eigen::Vector2f SamplePointFromMap() {
   float_t x_val;
   float_t y_val;
   float_t alpha;
-
   float_t randomf = rng_.UniformRandom(0.0, 1.0);
+
   if (randomf > 0.95){
     // "Exploration Bias" 5% of the time, greedily 
     //    attempt to get closer to the global graph
     alpha = rng_.UniformRandom(0.0, 2.0 * M_PI);
     x_val = goal_node.loc.x() + sampling_spread * cos(alpha);
     y_val = goal_node.loc.y() + sampling_spread * sin(alpha);
-    ROS_INFO("Sampling Goal Location = (%f, %f)", goal_node.loc.x(), goal_node.loc.y());
+    // ROS_INFO("Sampling Goal Location = (%f, %f)", goal_node.loc.x(), goal_node.loc.y());
   } else if (randomf < 0.05) {
+    // Randomly sample a point close to one of of the nodes
+    // to encourage branching from "middle of the path" nodes
     auto node_ptr = graph.begin();
     int random_index = rng_.RandomInt(0, int(graph.size()));
     std::advance(node_ptr, random_index);
@@ -428,20 +452,23 @@ Eigen::Vector2f SamplePointFromMap() {
 
     x_val = node_ptr->second.loc.x() + sampling_spread * cos(alpha);
     y_val = node_ptr->second.loc.y() + sampling_spread * sin(alpha);
-    ROS_INFO("Sampling Node Location = (%f, %f)", node_ptr->second.loc.x(),node_ptr->second.loc.y());
+    // ROS_INFO("Sampling Node Location = (%f, %f)", node_ptr->second.loc.x(),node_ptr->second.loc.y());
   } else {
+    // Sample point from map within map coordinates
     x_val = rng_.UniformRandom(map_x_min, map_x_max);
     y_val = rng_.UniformRandom(map_y_min, map_y_max);
-    ROS_INFO("Sampling Map Location.");
+    // ROS_INFO("Sampling Map Location.");
   }
-  ROS_INFO("Sampled Point = (%f, %f)", x_val, y_val);
+  // ROS_INFO("Sampled Point = (%f, %f)", x_val, y_val);
   return Eigen::Vector2f(x_val, y_val);
 }
 
+// Draws a node as an arrow (location and heading)
 void DrawNode(Node& node) {
   visualization::DrawArrow(node.loc, node.theta, 0x68ad7b, global_viz_msg_);
 }
 
+// Prints a nodes information
 void PrintNode(Node& node){
   if (process_sample_debug) {
     ROS_INFO("id = %s",node.id.c_str());
@@ -452,48 +479,54 @@ void PrintNode(Node& node){
     ROS_INFO("radius = %f", node.radius);
     ROS_INFO("theta_start = %f", node.theta_start);
     ROS_INFO("theta_end = %f", node.theta_end);
+    ROS_INFO("path_length = %f", node.path_length);
     ROS_INFO("sampled_point = (%f, %f)", node.sampled_point.x(), node.sampled_point.y());
     ROS_INFO("------------------");
   }
 }
 
+// Draw the Target Goal
 void Navigation::DrawTarget(bool& found) {
   uint32_t color;
   if (found){
+    // green color if found
     color = 0x17c225;
   } else {
+    // red color if not found
     color = 0xcc0c0c;
   }
   if (goal_node.loc != Eigen::Vector2f(0.0,0.0)){
+    // Draws a circle around the target to easily identify target goal
     visualization::DrawArc(nav_goal_loc_, max_truncation_dist, 0.0, 2.0 * M_PI, color, global_viz_msg_);
+    // Draws an arrow at the target goal (location and heading)
     visualization::DrawArrow(nav_goal_loc_, nav_goal_angle_, 0xcf25db, global_viz_msg_);
   }
 }
 
-Eigen::Vector2f GetLocation(std::string& id){
-  return graph[id].loc;
-}
-
+// Draws the Graph of nodes
 void DrawGraph(){
-  // ROS_INFO("=======================");
-  // ROS_INFO("Graph Contents: %ld items.", graph.size());
+  ROS_INFO("=======================");
+  ROS_INFO("Graph Contents: %ld items.", graph.size());
   std::map<std::string, Node>::iterator parent_id_ptr;
 
   for (auto const& x : graph) {
     Node node = x.second;
-    // PrintNode(node);
+    PrintNode(node);
     DrawNode(node);
 
     parent_id_ptr = graph.find(node.parent_id);
     if (parent_id_ptr != graph.end()) {
+      // Draws path between nodes
       visualization::DrawArc(node.center_of_turn, node.radius, node.theta_start, node.theta_end, 0x68ad7b, global_viz_msg_);
     }
   }
 }
 
+// Draws the solution to the found goal target as 
+// a red line from the start node to the finish node
 void DrawGraphSolution(){
-  ROS_INFO("=======================");
-  ROS_INFO("Graph Solution Contents: %ld items.", graph_solution.size());
+  // ROS_INFO("=======================");
+  // ROS_INFO("Graph Solution Contents: %ld items.", graph_solution.size());
   std::map<std::string, Node>::iterator parent_id_ptr;
 
   for (auto const& x : graph_solution) {
@@ -507,6 +540,8 @@ void DrawGraphSolution(){
   }
 }
 
+// Returns true if there is an intersection between any map line
+// and the line from loc and point
 bool Navigation::MapStraightLineIntersection(Eigen::Vector2f& loc, Eigen::Vector2f& point){
   int32_t num_map_lines = (int32_t)map_.lines.size();
   geometry::line2f my_line(loc, point);
@@ -518,10 +553,14 @@ bool Navigation::MapStraightLineIntersection(Eigen::Vector2f& loc, Eigen::Vector
   return false;
 }
 
+// Returns true if there is an intersection between any map line
+// and the curved line from loc to point
 bool Navigation::MapCurvedLineIntersection(Eigen::Vector2f& loc, Eigen::Vector2f& point){
   return false;
 }
 
+// Called after goal is found: adds nodes from graph
+// to graph_solution
 void Navigation::GenerateGraphSolution(){
   std::string node_id = goal_node.parent_id;
   Node new_node; 
@@ -533,9 +572,13 @@ void Navigation::GenerateGraphSolution(){
 
 }
 
+// Iterates over all nodes as candidate parents to the 
+// final goal location and heading. Admits the final node
+// if it is within a location/heading tolerance. If such a 
+// node exists, adds the appropriate nodes to the graph solution 
 void Navigation::FindPathToGoal() {
   Eigen::Vector2f goal_loc = goal_node.loc;
-  float_t goal_theta = goal_node.theta;
+  // float_t goal_theta = goal_node.theta;
 
   Node new_node;
 
@@ -543,26 +586,67 @@ void Navigation::FindPathToGoal() {
     std::string candidate_parent_id = node_itr.second.id;
     new_node = ProcessSampledPointFromParent(goal_loc, candidate_parent_id);
 
+    // if node parent_id is not blank
     if (new_node.parent_id != "" &&
-          (new_node.theta <= goal_theta + goal_theta_tolerance &&
-              new_node.theta >= goal_theta - goal_theta_tolerance) &&
-                (new_node.loc - goal_loc).norm() <= goal_loc_tolerance){
+          // and node final heading is within heading tolerance
+          ((new_node.theta <= goal_node.goal_theta_max &&
+              new_node.theta >= goal_node.goal_theta_min) ||
+           (new_node.theta + 2.0 * M_PI <= goal_node.goal_theta_max &&
+              new_node.theta + 2.0 * M_PI >= goal_node.goal_theta_min) ||
+           (new_node.theta - 2.0 * M_PI <= goal_node.goal_theta_max &&
+              new_node.theta - 2.0 * M_PI >= goal_node.goal_theta_min)) &&
+                // and node location is within location tolerance
+                (new_node.loc - goal_loc).norm() <= goal_loc_tolerance) {
       graph[new_node.id] = new_node;
       goal_node.parent_id = new_node.id;
       ROS_INFO("Goal found!");
       GenerateGraphSolution();
       return;
     }
+
+    // // a truncated point did not get close to goal, but maybe it would
+    // // have if it wasn't truncated.
+    // // if node parent_id is not blank
+    // if (new_node.parent_id != "" &&
+    //       !new_node.sp_intersection &&
+    //         // and node heading at sampled point is within heading tolerance
+    //         ((new_node.sp_theta <= goal_node.goal_theta_max &&
+    //             new_node.sp_theta >= goal_node.goal_theta_min) ||
+    //         (new_node.sp_theta + 2.0 * M_PI <= goal_node.goal_theta_max &&
+    //             new_node.sp_theta + 2.0 * M_PI >= goal_node.goal_theta_min) ||
+    //         (new_node.sp_theta - 2.0 * M_PI <= goal_node.goal_theta_max &&
+    //             new_node.sp_theta - 2.0 * M_PI >= goal_node.goal_theta_min))) {
+    //   graph[new_node.id] = new_node;
+    // }
+
+
+    // // if node parent_id is not blank
+    // if (new_node.parent_id != "" &&
+    //       // and node heading is within heading tolerance
+    //       (new_node.theta <= goal_theta + goal_theta_tolerance &&
+    //           new_node.theta >= goal_theta - goal_theta_tolerance) &&
+    //             // and node location is within location tolerance
+    //             (new_node.loc - goal_loc).norm() <= goal_loc_tolerance) {
+    //   graph[new_node.id] = new_node;
+    //   goal_node.parent_id = new_node.id;
+    //   ROS_INFO("Goal found!");
+    //   GenerateGraphSolution();
+    //   return;
+    // }
   }
-  // ROS_INFO("No path to goal found for all nodes in graph");
 }
 
+// Returns the truncated point assuming a straight line path from 
+// the loc to point at a max_dist away from loc (used for previous
+// simpler implementation)
 Eigen::Vector2f CalculateStraightTruncation(Eigen::Vector2f& loc, Eigen::Vector2f& point, float_t max_dist){
   float_t dist = (loc - point).norm();
   return Eigen::Vector2f(loc.x() + max_dist * (point.x() - loc.x()) / dist, loc.y() + max_dist * (point.y() - loc.y()) / dist);
 }
 
-//begin general process sampled point
+// Returns a node representing the final location/heading along a constant
+// curvature arc from the parent node to the sample_point at a max distance 
+// from the parent node
 Node Navigation::ProcessSampledPointFromParent(Eigen::Vector2f& sample_point, std::string parent_id){
   Node new_node;
   Eigen::Vector2f truncated_point;
@@ -571,7 +655,6 @@ Node Navigation::ProcessSampledPointFromParent(Eigen::Vector2f& sample_point, st
   Eigen::Vector2f parent_loc = graph[parent_id].loc;
   float_t parent_theta = graph[parent_id].theta;
   
-  //-----BEGIN COMPLICATED SECTION FOR CURVES
   float_t x_r = parent_loc.x();
   float_t y_r = parent_loc.y();
   float_t theta_r = parent_theta;
@@ -618,6 +701,7 @@ Node Navigation::ProcessSampledPointFromParent(Eigen::Vector2f& sample_point, st
   float_t L = s * R * theta_d;
   float_t theta_max = s * min(abs(L_max / R), abs(theta_d));
   float_t d_max = sqrt(2.0 * pow(R,2.0) * (1 - cos(theta_max)));
+  float_t L_tp = s * R * theta_max;
 
   float_t B_f = ((M_PI - theta_max) / 2.0) - (M_PI / 2.0 - theta_r);
   float_t B_b = (M_PI - theta_max) - (B_f + (M_PI / 2.0));
@@ -684,7 +768,7 @@ Node Navigation::ProcessSampledPointFromParent(Eigen::Vector2f& sample_point, st
     ROS_INFO("L = %f", L);
     ROS_INFO("theta_max = %f", theta_max);
     ROS_INFO("d_max = %f", d_max);
-
+    ROS_INFO("L_tp = %f", L_tp);
 
     ROS_INFO("B_f = %f", B_f);
     ROS_INFO("B_b = %f", B_b);
@@ -704,11 +788,12 @@ Node Navigation::ProcessSampledPointFromParent(Eigen::Vector2f& sample_point, st
     ROS_INFO("Truncated Point = (%f, %f)", truncated_point.x(), truncated_point.y());
   }
 
-  //-----END COMPLICATED SECTION FOR CURVES
-
-  if ((R < min_turn_radius_) || // calculated turn radius is too tight
-          (MapStraightLineIntersection(parent_loc, truncated_point)) ||
-              (parent_loc - truncated_point).norm() < min_truncation_dist) { // calculated path has an intersection with the map
+  // if calculated turn radius is too tight
+  if ((R < min_turn_radius_) || 
+          // or calculated path has an intersection with the map
+          (MapStraightLineIntersection(parent_loc, truncated_point)) || 
+              // or truncated point is virutally the same as the parent node
+              (parent_loc - truncated_point).norm() < min_truncation_dist) { 
     // this stops node from being added to graph
     new_node.parent_id = "";
   }
@@ -719,9 +804,14 @@ Node Navigation::ProcessSampledPointFromParent(Eigen::Vector2f& sample_point, st
   new_node.theta = theta_maxtan;
   new_node.radius = R;
   new_node.center_of_turn = Eigen::Vector2f(x_T,y_T);
+  new_node.path_length = L_tp;
   new_node.sampled_point = sample_point;
-  // ensure the arc gets drawn in the correct direction depending 
-  // on the orientation of several items such as s, L, and theta_r
+  new_node.sp_theta = theta_tan;
+  new_node.sp_intersection = MapStraightLineIntersection(parent_loc, sample_point);
+
+  // These conditionals ensure the arc gets drawn in the correct 
+  // direction depending on the orientation of several items 
+  // such as theta_s, L, and theta_r
   if (theta_s > 0){
     if (L < 0) {
       if (abs(theta_r) > M_PI / 2.0){
@@ -761,9 +851,10 @@ Node Navigation::ProcessSampledPointFromParent(Eigen::Vector2f& sample_point, st
   }
   return new_node;
 }
-// ---- end general process sampled point
 
-Node Navigation::ProcessSampledPoint(Eigen::Vector2f& sample_point){
+// Given a sample point, return the candidate node based on which 
+// parent node is closest to the sample point
+Node Navigation::ProcessSampledPointClosestNode(Eigen::Vector2f& sample_point){
   Node new_node;
   std::string candidate_parent_id = "";
 
@@ -777,8 +868,28 @@ Node Navigation::ProcessSampledPoint(Eigen::Vector2f& sample_point){
   }
   
   new_node = ProcessSampledPointFromParent(sample_point, candidate_parent_id);
-
   return new_node;
+}
+
+// Given a sample point, return the candidate node based on which 
+// gives the furthest free path from any of the parent nodes
+Node Navigation::ProcessSampledPointFurthestPath(Eigen::Vector2f& sample_point){
+  Node new_node;
+  Node best_node;
+  std::string candidate_parent_id = "";
+
+  float_t max_path_length = 0.0;
+  for (auto const& node_itr : graph) {
+    candidate_parent_id = node_itr.second.id;
+    new_node = ProcessSampledPointFromParent(sample_point, candidate_parent_id);
+
+    if (new_node.parent_id != "" && new_node.path_length > max_path_length){
+      max_path_length = new_node.path_length;
+      best_node = new_node;
+    }
+  }
+  
+  return best_node;
 }
 
 void Navigation::Run() {
@@ -787,24 +898,36 @@ void Navigation::Run() {
   visualization::ClearVisualizationMsg(local_viz_msg_);
   visualization::ClearVisualizationMsg(global_viz_msg_);
   
+  // goal is found when the goal_node parent_id is not blank
   goal_found = (goal_node.parent_id != "");
 
   drive_msg_.velocity = 0.0;
+  // Draw the starting location as a car
   DrawCar();
+  // Draw the target location
   DrawTarget(goal_found);
+  // Draw the nodes in the graph and the curved edges between them
   DrawGraph();
+  // Draw the Graph Solution when found as a red line between nodes
   DrawGraphSolution();
 
+  // if the goal hasn't been found yet
   if (goal_initialized && !goal_found) {
 
+    // randomly sample a point from the map
     sampled_point = SamplePointFromMap();
     Node new_node;
-    new_node = ProcessSampledPoint(sampled_point);
+    // create a new node which is kinematically feasible at
+    // a maximum distance from the closest node
+    new_node = ProcessSampledPointClosestNode(sampled_point);
 
+    // only admit the node if the parent id is not blank
     if (new_node.parent_id != ""){
       graph[new_node.id] = new_node;
     }
     
+    // attempt to find a kinematic solution to the goal
+    // and update goal_node.parent_id if one is found
     FindPathToGoal();
   }
 
@@ -817,8 +940,10 @@ void Navigation::Run() {
   viz_pub_.publish(global_viz_msg_);
   drive_pub_.publish(drive_msg_);
 
-  if (graph.size() > 300){
-    ROS_INFO("300 points added to graph.");
+  // limit the number of nodes that are added to the graph
+  // before exiting the program
+  if (int(graph.size()) > max_graph_size){
+    ROS_INFO("%d points added to graph.", max_graph_size);
     exit(3);
   }
 
