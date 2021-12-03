@@ -77,22 +77,23 @@ namespace {
   bool odometry_debug = false;
   bool process_sample_debug = false;
 
-  float map_x_min = -44.0;
-  float map_x_max = 44.0; 
-  float map_y_min = -34.0;  
-  float map_y_max = 34.0;  
+  float map_x_min = -16.0;
+  float map_x_max = 3.0; 
+  float map_y_min = 15.0;  
+  float map_y_max = 22.5;  
 
   std::map<std::string, Node> graph;
   std::map<std::string, Node> graph_solution;
   Eigen::Vector2f sampled_point;
-  float_t sampling_spread = 2.0;
+  float_t node_sampling_deviation = 1.0;
+  float_t goal_sampling_deviation = 0.5;
   Node goal_node;
   bool goal_initialized = false;
   bool goal_found = false;
-  float_t max_truncation_dist = 0.5;
+  float_t max_truncation_dist = 0.25;
   float_t min_truncation_dist = 0.01;
-  float_t goal_loc_tolerance = 0.25;
-  float_t goal_theta_tolerance = M_PI / 2.0;
+  float_t goal_loc_tolerance = 0.2;
+  float_t goal_theta_tolerance = M_PI / 8.0;
   
   unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
   util_random::Random rng_(seed);
@@ -411,23 +412,26 @@ Eigen::Vector2f SamplePointFromMap() {
   float_t x_val;
   float_t y_val;
   float_t alpha;
+  float_t spread;
 
   float_t randomf = rng_.UniformRandom(0.0, 1.0);
   if (randomf > 0.95){
     // "Exploration Bias" 5% of the time, greedily 
     //    attempt to get closer to the global graph
     alpha = rng_.UniformRandom(0.0, 2.0 * M_PI);
-    x_val = goal_node.loc.x() + sampling_spread * cos(alpha);
-    y_val = goal_node.loc.y() + sampling_spread * sin(alpha);
+    spread = rng_.UniformRandom(0.0,1.0);
+    x_val = goal_node.loc.x() + spread * goal_sampling_deviation * cos(alpha);
+    y_val = goal_node.loc.y() + spread * goal_sampling_deviation * sin(alpha);
     ROS_INFO("Sampling Goal Location = (%f, %f)", goal_node.loc.x(), goal_node.loc.y());
   } else if (randomf < 0.05) {
     auto node_ptr = graph.begin();
     int random_index = rng_.RandomInt(0, int(graph.size()));
     std::advance(node_ptr, random_index);
+
     alpha = rng_.UniformRandom(0.0, 2.0 * M_PI);
 
-    x_val = node_ptr->second.loc.x() + sampling_spread * cos(alpha);
-    y_val = node_ptr->second.loc.y() + sampling_spread * sin(alpha);
+    x_val = node_ptr->second.loc.x() + node_sampling_deviation * cos(alpha);
+    y_val = node_ptr->second.loc.y() + node_sampling_deviation * sin(alpha);
     ROS_INFO("Sampling Node Location = (%f, %f)", node_ptr->second.loc.x(),node_ptr->second.loc.y());
   } else {
     x_val = rng_.UniformRandom(map_x_min, map_x_max);
@@ -482,7 +486,7 @@ void DrawGraph(){
   for (auto const& x : graph) {
     Node node = x.second;
     // PrintNode(node);
-    DrawNode(node);
+    // DrawNode(node);
 
     parent_id_ptr = graph.find(node.parent_id);
     if (parent_id_ptr != graph.end()) {
