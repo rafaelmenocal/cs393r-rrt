@@ -7,7 +7,7 @@ Steps to Run:
 2) Change directory `roscd ut_automata`.
 3) Run `./bin/simulator --localize`.
 4) Run `./bin/websocket`.
-5) Open visualization `google-chrome web_rviz.html`.`
+5) Open visualization `google-chrome web_rviz.html`.
 6) Change directory to this repo. 
 7) Compile binaries `make`.
 8) Run navigation `./bin/navigation`.
