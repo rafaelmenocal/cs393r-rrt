@@ -25,7 +25,7 @@
 #include "eigen3/Eigen/Dense"
 #include "object_avoidance.h"
 // #include "global_planner.h"
-// #include "graph.h"
+// #include "tree.h"
 #include "vector_map/vector_map.h"
 
 #ifndef NAVIGATION_H
@@ -44,7 +44,8 @@ struct Node {
     float_t radius; // radius of turning arc
     float_t theta_start; // start theta from COT to parent_node
     float_t theta_end; // end theta from COT to this node
-    float_t path_length; 
+    float_t path_length; // path length to truncated point
+    float_t path_length_to_sample_point; // path length to sample_point
     float_t sp_theta; // final heading if car were to continue to sample_point
     Eigen::Vector2f sampled_point; 
     float_t goal_theta_min; // only for goal_node
@@ -66,7 +67,7 @@ class Navigation {
   // -- Kinematic and dynamic constraints for the car.
   float max_vel_ = 0.0;
   float max_accel_ = 4.0;
-  float min_turn_radius_ = 0.98;
+  float min_turn_radius_ = 0.45; // 0.98; //0.0;
   // -- Car dimensions.
   float car_width_ = 0.281;
   float car_length_ = 0.535;
@@ -129,9 +130,13 @@ class Navigation {
 
   void DrawTarget(bool& found);
 
-  void FindPathToGoal();
+  void FindPathFromLastNodeToGoal();
 
-  void GenerateGraphSolution();
+  void FindDirectPathFromLastNodeToGoal();
+
+  void FindPathFromAllNodesToGoal();
+
+  void GenerateTreeSolution();
 
   Node ProcessSampledPointClosestNode(Eigen::Vector2f& sample_point);
 

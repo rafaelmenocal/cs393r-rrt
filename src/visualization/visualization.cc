@@ -128,10 +128,11 @@ void DrawArc(const Vector2f& center,
 
 void DrawArrow(const Vector2f& loc,
                float angle,
+               float scale, // recommend 0.0 - 1.0
                uint32_t color,
                VisualizationMsg& msg){
-  float_t h_length = 0.5;
-  float_t a_length = 0.15;
+  float_t h_length = scale * 0.5;
+  float_t a_length = scale * 0.15;
   Eigen::Vector2f h_point(loc.x() + h_length * cos(angle),loc.y() + h_length * sin(angle));
 
   float theta_hl = (7.0/4.0) * M_PI + angle;

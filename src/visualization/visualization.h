@@ -67,6 +67,7 @@ void DrawArc(const Eigen::Vector2f& center,
 
 void DrawArrow(const Eigen::Vector2f& loc,
                float angle,
+               float scale,
                uint32_t color,
                amrl_msgs::VisualizationMsg& msg);
 
