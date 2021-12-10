@@ -85,14 +85,6 @@ namespace {
   float map_y_min = -34.0;  
   float map_y_max = 34.0;  
 
-  // struct Node {
-  //   std::string id;
-  //   Eigen::Vector2f loc;
-  //   float_t theta;
-  //   std::string parent_id;
-  //   Eigen::Vector2f turn_point_to_node;
-  // };
-
   std::map<std::string, Node> graph;
   // std::vector<Eigen::Vector2f> sampled_points;
   // int num_sampled_points = 50;
